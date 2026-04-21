@@ -117,9 +117,17 @@ int main(){ ios::sync_with_stdio(false); cin.tie(nullptr);
 
     while (true){ if(!getline(cin,line)) break; // allow blank lines
         string s=line; // normalize spaces: treat multiple spaces as one, trim
-        // Tokenize respecting quotes
-        vector<string> tokens; tokens.reserve(8);
-        for(size_t i=0;i<s.size();){ while(i<s.size() && s[i]==' ') ++i; if(i>=s.size()) break; if(s[i]=='\"'){ size_t j=i+1; string t; while(j<s.size() && s[j]!='\"'){ t.push_back(s[j]); ++j;} tokens.push_back(t); i=(j<s.size()?j+1:j); } else { size_t j=i; string t; while(j<s.size() && s[j]!=' ') { t.push_back(s[j]); ++j;} tokens.push_back(t); i=j; } }
+        // Tokenize respecting quotes mid-token
+        vector<string> tokens;
+        {
+            string cur; bool inq=false;
+            for(char c: s){
+                if(c=='"'){ inq=!inq; cur.push_back(c); }
+                else if(c==' ' && !inq){ if(!cur.empty()){ tokens.push_back(cur); cur.clear(); } }
+                else { cur.push_back(c); }
+            }
+            if(!cur.empty()) tokens.push_back(cur);
+        }
         if(tokens.empty()) { continue; }
         string cmd=tokens[0];
         auto invalid=[&]{ cout<<"Invalid\n"; };
@@ -127,14 +135,14 @@ int main(){ ios::sync_with_stdio(false); cin.tie(nullptr);
         if(cmd=="quit"||cmd=="exit"){ break; }
         else if(cmd=="su"){ if(tokens.size()<2 || tokens.size()>3){ invalid(); continue; } string uid=tokens[1]; string pwd = tokens.size()==3?tokens[2]:""; auto u=store.read_user(uid); if(!u){ invalid(); continue; } if(current_priv()>u->priv){ /* higher priv can omit pwd */ }
             if(tokens.size()==2){ if(current_priv()>u->priv){ login_stack.push_back(*u); sessions.push_back({""}); } else { invalid(); } }
-            else { if(pwd==u->password){ login_stack.push_back(*u); sessions.push_back({""}); } else { invalid(); } }
+            else { if(pwd==u->password){ login_stack.push_back(*u); sessions.push_back({""}); } else { invalid(); continue; } }
         }
-        else if(cmd=="logout"){ if(current_priv()<1){ invalid(); continue; } login_stack.pop_back(); sessions.pop_back(); }
+        else if(cmd=="logout"){ if(login_stack.empty()){ invalid(); continue; } login_stack.pop_back(); sessions.pop_back(); }
         else if(cmd=="register"){ if(tokens.size()!=4){ invalid(); continue; } string uid=tokens[1], pw=tokens[2], name=tokens[3]; if(store.read_user(uid)){ invalid(); continue; } store.add_user(User{uid,pw,name,1}); }
         else if(cmd=="passwd"){ if(tokens.size()<3 || tokens.size()>4){ invalid(); continue; } string uid=tokens[1]; auto u=store.read_user(uid); if(!u){ invalid(); continue; } string newp = tokens.back(); if(current_priv()==7){ if(tokens.size()==3){ store.add_user(User{u->id,newp,u->name,u->priv}); } else { string cur=tokens[2]; if(cur==u->password) store.add_user(User{u->id,newp,u->name,u->priv}); else { invalid(); continue; } } }
             else { if(tokens.size()!=4){ invalid(); continue; } string cur=tokens[2]; if(cur==u->password) store.add_user(User{u->id,newp,u->name,u->priv}); else { invalid(); continue; } }
         }
-        else if(cmd=="useradd"){ if(current_priv()<3){ invalid(); continue; } if(tokens.size()!=5){ invalid(); continue; } string uid=tokens[1], pw=tokens[2]; int priv=stoi(tokens[3]); string name=tokens[4]; if(priv>=current_priv() || (priv!=1 && priv!=3 && priv!=7)){ invalid(); continue; } if(store.read_user(uid)){ invalid(); continue; } store.add_user(User{uid,pw,name,priv}); }
+        else if(cmd=="useradd"){ if(current_priv()<3){ invalid(); continue; } if(tokens.size()!=5){ invalid(); continue; } string uid=tokens[1], pw=tokens[2]; int priv; try{ priv=stoi(tokens[3]); }catch(...){ invalid(); continue; } string name=tokens[4]; if(priv>=current_priv() || (priv!=1 && priv!=3 && priv!=7)){ invalid(); continue; } if(store.read_user(uid)){ invalid(); continue; } store.add_user(User{uid,pw,name,priv}); }
         else if(cmd=="delete"){ if(current_priv()<7){ invalid(); continue; } if(tokens.size()!=2){ invalid(); continue; } string uid=tokens[1]; // cannot delete if logged in
             bool logged=false; for(auto &u: login_stack) if(u.id==uid){ logged=true; break; } if(logged){ invalid(); continue; } if(!store.read_user(uid)){ invalid(); continue; } store.delete_user(uid); }
         else if(cmd=="select"){ if(current_priv()<3){ invalid(); continue; } if(tokens.size()!=2){ invalid(); continue; } string isbn=tokens[1]; auto bk=store.read_book(isbn); if(!bk){ Book nb; nb.isbn=isbn; nb.stock=0; nb.price=0; nb.name=""; nb.author=""; nb.keywords={}; store.add_book(nb); } sessions.back().selected_isbn=isbn; }
@@ -143,9 +151,9 @@ int main(){ ios::sync_with_stdio(false); cin.tie(nullptr);
             auto bk = store.read_book(sessions.back().selected_isbn); if(!bk){ invalid(); continue; }
             unordered_set<string> seen;
             for(size_t i=1;i<tokens.size();++i){ string t=tokens[i]; size_t eq=t.find('='); if(t.rfind("-ISBN",0)==0){ if(seen.count("ISBN")){ invalid(); bk=optional<Book>(); break; } seen.insert("ISBN"); string nv=t.substr(eq+1); if(nv.empty()||nv==bk->isbn){ bk=optional<Book>(); break; } if(store.read_book(nv)){ bk=optional<Book>(); break; } bk->isbn=nv; }
-                else if(t.rfind("-name",0)==0){ if(seen.count("name")){ bk=optional<Book>(); break;} seen.insert("name"); string nv=t.substr(eq+1); if(nv.size()>=2 && nv.front()=='\"' && nv.back()=='\"') nv=nv.substr(1,nv.size()-2); if(nv.empty()){ bk=optional<Book>(); break;} bk->name=nv; }
-                else if(t.rfind("-author",0)==0){ if(seen.count("author")){ bk=optional<Book>(); break;} seen.insert("author"); string nv=t.substr(eq+1); if(nv.size()>=2 && nv.front()=='\"' && nv.back()=='\"') nv=nv.substr(1,nv.size()-2); if(nv.empty()){ bk=optional<Book>(); break;} bk->author=nv; }
-                else if(t.rfind("-keyword",0)==0){ if(seen.count("keyword")){ bk=optional<Book>(); break;} seen.insert("keyword"); string nv=t.substr(eq+1); if(nv.size()>=2 && nv.front()=='\"' && nv.back()=='\"') nv=nv.substr(1,nv.size()-2); if(nv.empty()){ bk=optional<Book>(); break;} auto parts=split_kw(nv); set<string> uniq(parts.begin(), parts.end()); if((int)uniq.size()!=(int)parts.size()){ bk=optional<Book>(); break;} bk->keywords=parts; }
+                else if(t.rfind("-name",0)==0){ if(seen.count("name")){ bk=optional<Book>(); break;} seen.insert("name"); string nv=t.substr(eq+1); if(nv.size()>=2 && nv.front()=='"' && nv.back()=='"') nv=nv.substr(1,nv.size()-2); if(nv.empty()){ bk=optional<Book>(); break;} bk->name=nv; }
+                else if(t.rfind("-author",0)==0){ if(seen.count("author")){ bk=optional<Book>(); break;} seen.insert("author"); string nv=t.substr(eq+1); if(nv.size()>=2 && nv.front()=='"' && nv.back()=='"') nv=nv.substr(1,nv.size()-2); if(nv.empty()){ bk=optional<Book>(); break;} bk->author=nv; }
+                else if(t.rfind("-keyword",0)==0){ if(seen.count("keyword")){ bk=optional<Book>(); break;} seen.insert("keyword"); string nv=t.substr(eq+1); if(nv.size()>=2 && nv.front()=='"' && nv.back()=='"') nv=nv.substr(1,nv.size()-2); if(nv.empty()){ bk=optional<Book>(); break;} auto parts=split_kw(nv); set<string> uniq(parts.begin(), parts.end()); if((int)uniq.size()!=(int)parts.size()){ bk=optional<Book>(); break;} bk->keywords=parts; }
                 else if(t.rfind("-price",0)==0){ if(seen.count("price")){ bk=optional<Book>(); break;} seen.insert("price"); string nv=t.substr(eq+1); if(nv.empty()){ bk=optional<Book>(); break;} long double p; try{ p=stold(nv);}catch(...){ bk=optional<Book>(); break;} bk->price=p; }
                 else { bk=optional<Book>(); break; }
             }
@@ -159,9 +167,9 @@ int main(){ ios::sync_with_stdio(false); cin.tie(nullptr);
         }
         else if(cmd=="show"){ if(current_priv()<1){ invalid(); continue; } // handle optional filters
             string type=""; string val=""; if(tokens.size()>1){ string t=tokens[1]; size_t eq=t.find('='); if(t.rfind("-ISBN",0)==0){ type="ISBN"; val=t.substr(eq+1); }
-                else if(t.rfind("-name",0)==0){ type="name"; val=t.substr(eq+1); if(val.size()>=2 && val.front()=='\"' && val.back()=='\"') val=val.substr(1,val.size()-2); }
-                else if(t.rfind("-author",0)==0){ type="author"; val=t.substr(eq+1); if(val.size()>=2 && val.front()=='\"' && val.back()=='\"') val=val.substr(1,val.size()-2); }
-                else if(t.rfind("-keyword",0)==0){ type="keyword"; val=t.substr(eq+1); if(val.size()>=2 && val.front()=='\"' && val.back()=='\"') val=val.substr(1,val.size()-2); auto parts=split_kw(val); if(parts.size()!=1){ invalid(); continue; } }
+                else if(t.rfind("-name",0)==0){ type="name"; val=t.substr(eq+1); if(val.size()>=2 && val.front()=='"' && val.back()=='"') val=val.substr(1,val.size()-2); }
+                else if(t.rfind("-author",0)==0){ type="author"; val=t.substr(eq+1); if(val.size()>=2 && val.front()=='"' && val.back()=='"') val=val.substr(1,val.size()-2); }
+                else if(t.rfind("-keyword",0)==0){ type="keyword"; val=t.substr(eq+1); if(val.size()>=2 && val.front()=='"' && val.back()=='"') val=val.substr(1,val.size()-2); auto parts=split_kw(val); if(parts.size()!=1){ invalid(); continue; } }
                 else { invalid(); continue; } if(val.empty()){ invalid(); continue; } }
             // scan books file linearly to satisfy not reading all data into memory? We'll stream and filter
             ifstream in("books.db"); vector<Book> res; string line; while(getline(in,line)){ if(line.empty()) continue; string a,b,c,d,e,f; stringstream ss(line); ss>>a>>b>>c>>d>>e>>f; Book bk; bk.isbn=a; bk.name=b; bk.author=c; bk.keywords=split_kw(d); bk.price=stold(e); bk.stock=stoll(f);
@@ -173,7 +181,7 @@ int main(){ ios::sync_with_stdio(false); cin.tie(nullptr);
         else if(cmd=="show" && tokens.size()>1 && tokens[1]=="finance"){ // unreachable due to previous branch name, handle separate
             // handled below
         }
-        else if(cmd=="show"||cmd=="log"||cmd=="report"||cmd=="report"){ /* fallthrough */ }
+        else if(cmd=="show"||cmd=="log"||cmd=="report"){ /* placeholder */ }
         else if(cmd=="show" && tokens.size()>=2 && tokens[1]=="finance"){ if(current_priv()<7){ invalid(); continue; } int cnt=-1; if(tokens.size()==3){ try{ cnt=stoi(tokens[2]); }catch(...){ invalid(); continue; } if(cnt==0){ cout<<"\n"; continue; } } auto p=store.sum_finance(cnt); cout<<"+ "<<fixed<<setprecision(2)<<(double)p.first<<" - "<<fixed<<setprecision(2)<<(double)p.second<<"\n"; }
         else if(cmd=="log"){ if(current_priv()<7){ invalid(); continue; } // simple log: output transactions file
             ifstream in("trans.log"); string x; bool any=false; while(getline(in,x)){ cout<<x<<"\n"; any=true; } if(!any) cout<<"\n"; }
