@@ -86,14 +86,14 @@ public:
         user_idx.set(u.id, off);
         return off;
     }
-    optional<User> read_user(const string& id){ long long off = user_idx.get(id); if(off<0) return nullopt; uf.seekg(off); string line; getline(uf, line); if(!uf) return nullopt; stringstream ss(line); string idv,pw,name; int priv; ss>>idv>>pw>>name>>priv; return User{idv,pw,name,priv}; }
+    optional<User> read_user(const string& id){ long long off = user_idx.get(id); if(off<0) return nullopt; uf.seekg(off); string line; getline(uf, line); if(!uf) return nullopt; vector<string> f; string cur; for(char c: line){ if(c=='\t'){ f.push_back(cur); cur.clear(); } else cur.push_back(c);} f.push_back(cur); if(f.size()!=4) return nullopt; return User{f[0],f[1],f[2],stoi(f[3])}; }
     bool delete_user(const string& id){ long long off = user_idx.get(id); if(off<0) return false; user_idx.erase(id); return true; }
 
     long long add_book(const Book& b){ bf.seekp(0, ios::end); long long off = bf.tellp();
         string kw = join(b.keywords);
         string line = esc(b.isbn)+"\t"+esc(b.name)+"\t"+esc(b.author)+"\t"+esc(kw)+"\t"+to_string((double)b.price)+"\t"+to_string(b.stock)+"\n";
         bf.write(line.data(), line.size()); bf.flush(); book_idx.set(b.isbn, off); return off; }
-    optional<Book> read_book(const string& isbn){ long long off = book_idx.get(isbn); if(off<0) return nullopt; bf.seekg(off); string line; getline(bf,line); if(!bf) return nullopt; string a,b,c,d,e,f; stringstream ss(line); ss>>a>>b>>c>>d>>e>>f; Book bk; bk.isbn=a; bk.name=b; bk.author=c; bk.keywords=split_kw(d); bk.price=stold(e); bk.stock=stoll(f); return bk; }
+    optional<Book> read_book(const string& isbn){ long long off = book_idx.get(isbn); if(off<0) return nullopt; bf.seekg(off); string line; getline(bf,line); if(!bf) return nullopt; vector<string> f; string cur; for(char c: line){ if(c=='\t'){ f.push_back(cur); cur.clear(); } else cur.push_back(c);} f.push_back(cur); if(f.size()!=6) return nullopt; Book bk; bk.isbn=f[0]; bk.name=f[1]; bk.author=f[2]; bk.keywords=split_kw(f[3]); bk.price=stold(f[4]); bk.stock=stoll(f[5]); return bk; }
     void update_book(const Book& bk){ // append new record and update index
         add_book(bk);
     }
@@ -150,7 +150,8 @@ int main(){ ios::sync_with_stdio(false); cin.tie(nullptr);
             // parse options like -ISBN=..., -name="..."
             auto bk = store.read_book(sessions.back().selected_isbn); if(!bk){ invalid(); continue; }
             unordered_set<string> seen;
-            for(size_t i=1;i<tokens.size();++i){ string t=tokens[i]; size_t eq=t.find('='); if(t.rfind("-ISBN",0)==0){ if(seen.count("ISBN")){ invalid(); bk=optional<Book>(); break; } seen.insert("ISBN"); string nv=t.substr(eq+1); if(nv.empty()||nv==bk->isbn){ bk=optional<Book>(); break; } if(store.read_book(nv)){ bk=optional<Book>(); break; } bk->isbn=nv; }
+            for(size_t i=1;i<tokens.size();++i){ string t=tokens[i]; size_t eq=t.find('='); if(eq==string::npos){ bk=optional<Book>(); break; }
+                if(t.rfind("-ISBN",0)==0){ if(seen.count("ISBN")){ invalid(); bk=optional<Book>(); break; } seen.insert("ISBN"); string nv=t.substr(eq+1); if(nv.empty()||nv==bk->isbn){ bk=optional<Book>(); break; } if(store.read_book(nv)){ bk=optional<Book>(); break; } bk->isbn=nv; }
                 else if(t.rfind("-name",0)==0){ if(seen.count("name")){ bk=optional<Book>(); break;} seen.insert("name"); string nv=t.substr(eq+1); if(nv.size()>=2 && nv.front()=='"' && nv.back()=='"') nv=nv.substr(1,nv.size()-2); if(nv.empty()){ bk=optional<Book>(); break;} bk->name=nv; }
                 else if(t.rfind("-author",0)==0){ if(seen.count("author")){ bk=optional<Book>(); break;} seen.insert("author"); string nv=t.substr(eq+1); if(nv.size()>=2 && nv.front()=='"' && nv.back()=='"') nv=nv.substr(1,nv.size()-2); if(nv.empty()){ bk=optional<Book>(); break;} bk->author=nv; }
                 else if(t.rfind("-keyword",0)==0){ if(seen.count("keyword")){ bk=optional<Book>(); break;} seen.insert("keyword"); string nv=t.substr(eq+1); if(nv.size()>=2 && nv.front()=='"' && nv.back()=='"') nv=nv.substr(1,nv.size()-2); if(nv.empty()){ bk=optional<Book>(); break;} auto parts=split_kw(nv); set<string> uniq(parts.begin(), parts.end()); if((int)uniq.size()!=(int)parts.size()){ bk=optional<Book>(); break;} bk->keywords=parts; }
@@ -172,7 +173,7 @@ int main(){ ios::sync_with_stdio(false); cin.tie(nullptr);
                 else if(t.rfind("-keyword",0)==0){ type="keyword"; val=t.substr(eq+1); if(val.size()>=2 && val.front()=='"' && val.back()=='"') val=val.substr(1,val.size()-2); auto parts=split_kw(val); if(parts.size()!=1){ invalid(); continue; } }
                 else { invalid(); continue; } if(val.empty()){ invalid(); continue; } }
             // scan books file linearly to satisfy not reading all data into memory? We'll stream and filter
-            ifstream in("books.db"); vector<Book> res; string line; while(getline(in,line)){ if(line.empty()) continue; string a,b,c,d,e,f; stringstream ss(line); ss>>a>>b>>c>>d>>e>>f; Book bk; bk.isbn=a; bk.name=b; bk.author=c; bk.keywords=split_kw(d); bk.price=stold(e); bk.stock=stoll(f);
+            ifstream in("books.db"); vector<Book> res; string line; while(getline(in,line)){ if(line.empty()) continue; vector<string> f; string cur; for(char c: line){ if(c=='\t'){ f.push_back(cur); cur.clear(); } else cur.push_back(c);} f.push_back(cur); if(f.size()!=6) continue; Book bk; bk.isbn=f[0]; bk.name=f[1]; bk.author=f[2]; bk.keywords=split_kw(f[3]); bk.price=stold(f[4]); bk.stock=stoll(f[5]);
                 bool ok=true; if(type=="ISBN") ok=(bk.isbn==val); else if(type=="name") ok=(bk.name==val); else if(type=="author") ok=(bk.author==val); else if(type=="keyword") ok=(find(bk.keywords.begin(), bk.keywords.end(), val)!=bk.keywords.end()); if(ok) res.push_back(bk); }
             sort(res.begin(), res.end(), [](const Book&a,const Book&b){ return a.isbn<b.isbn; });
             if(res.empty()){ cout<<"\n"; }
